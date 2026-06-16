@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Panama Paint - Visualizador de Interiores</title>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <header>
+    <h1>Panama Paint</h1>
+    <p>Selecciona una habitación y luego un color para pintarla</p>
+  </header>
+
+  <main>
+    <section class="floor-plan">
+      <h2>Plano de la Casa</h2>
+      <div class="house" id="house">
+        <div class="room living" data-room="living" style="background-color: #f5f5f0;">
+          <span>Sala</span>
+        </div>
+        <div class="room kitchen" data-room="kitchen" style="background-color: #f5f5f0;">
+          <span>Cocina</span>
+        </div>
+        <div class="room bedroom1" data-room="bedroom1" style="background-color: #f5f5f0;">
+          <span>Dormitorio 1</span>
+        </div>
+        <div class="room bedroom2" data-room="bedroom2" style="background-color: #f5f5f0;">
+          <span>Dormitorio 2</span>
+        </div>
+        <div class="room bathroom" data-room="bathroom" style="background-color: #f5f5f0;">
+          <span>Baño</span>
+        </div>
+        <div class="room hallway" data-room="hallway" style="background-color: #f5f5f0;">
+          <span>Pasillo</span>
+        </div>
+      </div>
+    </section>
+
+    <aside class="palette-section">
+      <h2>Paleta de Colores</h2>
+      <div class="palette" id="palette"></div>
+      <div class="selected-info">
+        <p>Habitación seleccionada: <strong id="selectedRoom">Ninguna</strong></p>
+        <p>Color seleccionado: <span id="selectedColor" class="color-swatch" style="background-color: #ccc;"></span></p>
+        <button id="resetBtn" class="btn">Restablecer todo</button>
+      </div>
+    </aside>
+  </main>
+
+  <script src="js/script.js"></script>
+</body>
+</html>
