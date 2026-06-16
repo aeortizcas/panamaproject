@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Panama Paint - Visualizador 3D</title>
+  <link rel="stylesheet" href="css/styles.css">
+  <style>
+    body { overflow: hidden; }
+    header { position: relative; z-index: 10; }
+    main { padding: 0; max-width: none; gap: 0; flex-wrap: nowrap; height: calc(100vh - 100px); }
+    #canvas-container { flex: 1; position: relative; background: #dde5ed; }
+    #canvas-container canvas { display: block; }
+    .palette-section {
+      position: absolute;
+      top: 1rem;
+      right: 1rem;
+      z-index: 20;
+      min-width: 200px;
+      background: white;
+      padding: 1.2rem;
+      border-radius: 10px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+      max-height: calc(100vh - 140px);
+      overflow-y: auto;
+    }
+    .palette-section h2 { font-size: 1rem; margin-bottom: 0.6rem; }
+    .palette { gap: 6px; margin-bottom: 1rem; }
+    .color-swatch { width: 28px; height: 28px; }
+    .selected-info { font-size: 0.85rem; }
+    .btn { font-size: 0.8rem; padding: 0.4rem 1rem; }
+    .label {
+      color: #fff;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 14px;
+      font-weight: 600;
+      text-shadow: 0 1px 4px rgba(0,0,0,0.6), 0 0 8px rgba(0,0,0,0.3);
+      pointer-events: none;
+      user-select: none;
+      white-space: nowrap;
+    }
+    .label-dim { opacity: 0.5; }
+    .hint {
+      position: absolute;
+      bottom: 1rem;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,0.6);
+      color: #fff;
+      padding: 0.5rem 1.2rem;
+      border-radius: 20px;
+      font-size: 0.85rem;
+      z-index: 15;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Panama Paint</h1>
+    <p>Visualizador 3D de Interiores</p>
+    <nav><a href="index.html">Plano 2D</a> | <a href="index10.html">Chatbot Asistente</a></nav>
+  </header>
+
+  <main>
+    <div id="canvas-container">
+      <aside class="palette-section" id="paletteSection">
+        <h2>Paleta de Colores</h2>
+        <div class="palette" id="palette"></div>
+        <div class="selected-info">
+          <p>Habitación: <strong id="selectedRoom">Ninguna</strong></p>
+          <p>Color: <span id="selectedColor" class="color-swatch" style="background:#ccc;"></span></p>
+          <button id="resetBtn" class="btn">Restablecer todo</button>
+        </div>
+      </aside>
+      <div class="hint">Rota con el mouse · Haz clic en una habitación · Usa la paleta</div>
+    </div>
+  </main>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+
+    const COLORS = [
+      '#f5f5f0', '#ffffff', '#e8dcc8', '#d4c5a9',
+      '#f9e4b7', '#f7d794', '#f5cd79', '#e15f41',
+      '#c44569', '#574b90', '#3dc1d3', '#78e08f',
+      '#e77f67', '#f19066', '#3c6382', '#82ccdd',
+    ];
+
+    let selectedRoomMesh = null;
+    let selectedColor = '#f5f5f0';
+    let roomMeshes = [];
+
+    const roomData = [
+      { name: 'Sala',       id: 'living',    x: -1.1, z: -3.2, w: 4.2, d: 4.2 },
+      { name: 'Cocina',     id: 'kitchen',   x:  2.1, z: -3.2, w: 2.0, d: 2.0 },
+      { name: 'Dormitorio 1', id: 'bedroom1', x:  2.1, z:  0.0, w: 2.0, d: 4.2 },
+      { name: 'Dormitorio 2', id: 'bedroom2', x: -2.1, z:  2.1, w: 2.0, d: 4.2 },
+      { name: 'Baño',       id: 'bathroom',  x:  0.0, z:  1.1, w: 2.0, d: 2.0 },
+      { name: 'Pasillo',    id: 'hallway',   x:  1.1, z:  3.2, w: 4.2, d: 2.0 },
+    ];
+
+    const container = document.getElementById('canvas-container');
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xdde5ed);
+
+    const camera = new THREE.PerspectiveCamera(40, container.clientWidth / container.clientHeight, 0.1, 100);
+    camera.position.set(7, 6, 7);
+    camera.lookAt(0, 0, 0);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(container.clientWidth, container.clientHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.2;
+    container.appendChild(renderer.domElement);
+
+    const labelRenderer = new CSS2DRenderer();
+    labelRenderer.setSize(container.clientWidth, container.clientHeight);
+    labelRenderer.domElement.style.position = 'absolute';
+    labelRenderer.domElement.style.top = '0';
+    labelRenderer.domElement.style.pointerEvents = 'none';
+    container.appendChild(labelRenderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.set(0, 0.2, 0);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.maxPolarAngle = Math.PI / 2.1;
+    controls.minDistance = 3;
+    controls.maxDistance = 20;
+    controls.update();
+
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+    scene.add(ambientLight);
+
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
+    dirLight.position.set(8, 15, 5);
+    dirLight.castShadow = true;
+    dirLight.shadow.mapSize.width = 1024;
+    dirLight.shadow.mapSize.height = 1024;
+    scene.add(dirLight);
+
+    const fillLight = new THREE.DirectionalLight(0x8ecae6, 0.4);
+    fillLight.position.set(-5, 5, -5);
+    scene.add(fillLight);
+
+    const hemiLight = new THREE.HemisphereLight(0x87ceeb, 0x3a3a3a, 0.6);
+    scene.add(hemiLight);
+
+    const groundGeo = new THREE.PlaneGeometry(20, 20);
+    const groundMat = new THREE.MeshStandardMaterial({
+      color: 0xc8d8e4,
+      roughness: 0.9,
+      metalness: 0.0,
+    });
+    const ground = new THREE.Mesh(groundGeo, groundMat);
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = -0.05;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    function createRoom(data) {
+      const height = 1.2;
+      const geo = new THREE.BoxGeometry(data.w, height, data.d);
+      const mat = new THREE.MeshStandardMaterial({
+        color: '#f5f5f0',
+        roughness: 0.7,
+        metalness: 0.0,
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(data.x, height / 2, data.z);
+      mesh.castShadow = true;
+      mesh.userData = { id: data.id, name: data.name, originalColor: '#f5f5f0' };
+
+      const edges = new THREE.EdgesGeometry(geo);
+      const lineMat = new THREE.LineBasicMaterial({ color: 0x445566, transparent: true, opacity: 0.4 });
+      const wireframe = new THREE.LineSegments(edges, lineMat);
+      wireframe.position.copy(mesh.position);
+
+      const labelDiv = document.createElement('div');
+      labelDiv.textContent = data.name;
+      labelDiv.className = 'label';
+      const label = new CSS2DObject(labelDiv);
+      label.position.set(data.x, height + 0.3, data.z);
+
+      const group = new THREE.Group();
+      group.add(mesh);
+      group.add(wireframe);
+      scene.add(group);
+      scene.add(label);
+
+      roomMeshes.push(mesh);
+      return { mesh, wireframe, label, data };
+    }
+
+    const roomObjects = roomData.map(createRoom);
+
+    function selectRoom(mesh) {
+      if (selectedRoomMesh) {
+        const prevMat = selectedRoomMesh.material;
+        prevMat.emissive.setHex(0x000000);
+        prevMat.emissiveIntensity = 0;
+      }
+      selectedRoomMesh = mesh;
+      const mat = mesh.material;
+      mat.emissive.setHex(0x222233);
+      mat.emissiveIntensity = 0.15;
+      document.getElementById('selectedRoom').textContent = mesh.userData.name;
+      mesh.material.color.set(selectedColor);
+      mesh.userData.currentColor = selectedColor;
+    }
+
+    function applyColorToRoom(mesh, hex) {
+      mesh.material.color.set(hex);
+      mesh.userData.currentColor = hex;
+    }
+
+    const raycaster = new THREE.Raycaster();
+    const pointer = new THREE.Vector2();
+
+    renderer.domElement.addEventListener('click', (e) => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+      raycaster.setFromCamera(pointer, camera);
+      const intersects = raycaster.intersectObjects(roomMeshes);
+
+      if (intersects.length > 0) {
+        const hit = intersects[0].object;
+        selectRoom(hit);
+        document.getElementById('selectedColor').style.backgroundColor = selectedColor;
+      }
+    });
+
+    renderer.domElement.addEventListener('touchstart', (e) => {
+      if (e.changedTouches.length === 1) {
+        const touch = e.changedTouches[0];
+        const rect = renderer.domElement.getBoundingClientRect();
+        pointer.x = ((touch.clientX - rect.left) / rect.width) * 2 - 1;
+        pointer.y = -((touch.clientY - rect.top) / rect.height) * 2 + 1;
+
+        raycaster.setFromCamera(pointer, camera);
+        const intersects = raycaster.intersectObjects(roomMeshes);
+
+        if (intersects.length > 0) {
+          const hit = intersects[0].object;
+          selectRoom(hit);
+          document.getElementById('selectedColor').style.backgroundColor = selectedColor;
+        }
+      }
+    }, { passive: true });
+
+    const paletteEl = document.getElementById('palette');
+
+    function buildPalette() {
+      COLORS.forEach((hex) => {
+        const swatch = document.createElement('div');
+        swatch.className = 'color-swatch';
+        swatch.style.backgroundColor = hex;
+        swatch.dataset.color = hex;
+        swatch.addEventListener('click', () => {
+          document.querySelectorAll('.color-swatch').forEach((s) => s.classList.remove('active'));
+          swatch.classList.add('active');
+          selectedColor = hex;
+          document.getElementById('selectedColor').style.backgroundColor = hex;
+          if (selectedRoomMesh) {
+            applyColorToRoom(selectedRoomMesh, hex);
+          }
+        });
+        paletteEl.appendChild(swatch);
+      });
+      document.querySelector('.color-swatch').classList.add('active');
+    }
+
+    buildPalette();
+
+    document.getElementById('resetBtn').addEventListener('click', () => {
+      roomMeshes.forEach((mesh) => {
+        mesh.material.color.set('#f5f5f0');
+        mesh.userData.currentColor = '#f5f5f0';
+        const mat = mesh.material;
+        mat.emissive.setHex(0x000000);
+        mat.emissiveIntensity = 0;
+      });
+      selectedRoomMesh = null;
+      document.getElementById('selectedRoom').textContent = 'Ninguna';
+      selectedColor = '#f5f5f0';
+      document.getElementById('selectedColor').style.backgroundColor = '#ccc';
+      document.querySelectorAll('.color-swatch').forEach((s) => s.classList.remove('active'));
+      document.querySelector('.color-swatch').classList.add('active');
+    });
+
+    function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+      labelRenderer.render(scene, camera);
+    }
+
+    animate();
+
+    window.addEventListener('resize', () => {
+      const w = container.clientWidth;
+      const h = container.clientHeight;
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h);
+      labelRenderer.setSize(w, h);
+    });
+
+    const selColorEl = document.getElementById('selectedColor');
+    const selRoomEl = document.getElementById('selectedRoom');
+    selColorEl.style.backgroundColor = selectedColor;
+    selRoomEl.textContent = 'Ninguna';
+  </script>
+</body>
+</html>
