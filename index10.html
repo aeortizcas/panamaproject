@@ -1,0 +1,818 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Office Multilingual Voice Assistant (Case Flow)</title>
+    
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+            background-color: #f4f7f6;
+        }
+        #container {
+            width: 90%;
+            max-width: 500px;
+            background-color: white;
+            border: 1px solid #ddd;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        #text-input {
+            width: 100%;
+            padding: 12px 10px;
+            margin-bottom: 20px;
+            border: 2px solid #ccc;
+            border-radius: 6px;
+            font-size: 1.1em;
+            box-sizing: border-box;
+            display: block;
+        }
+        #text-input:focus {
+            outline: none;
+            border-color: #007bff;
+            box-shadow: 0 0 5px rgba(0,123,255,0.3);
+        }
+        #voice-button, #restart-button {
+            padding: 15px 30px;
+            font-size: 1.2em;
+            cursor: pointer;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            transition: background-color 0.3s, transform 0.1s;
+            display: block;
+            width: 100%;
+        }
+        #voice-button:hover:not(:disabled), #restart-button:hover:not(:disabled) {
+            background-color: #0056b3;
+        }
+        #voice-button:active:not(:disabled), #restart-button:active:not(:disabled) {
+            transform: scale(0.98);
+        }
+        #voice-button:disabled, #restart-button:disabled {
+            background-color: #ccc;
+        }
+        #voice-button.ready-to-speak {
+            background-color: #ff9800;
+            border: 3px solid #ff5722;
+            animation: pulse 1s infinite;
+        }
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(255, 152, 0, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(255, 152, 0, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(255, 152, 0, 0); }
+        }
+        .output-box {
+            margin-bottom: 20px;
+            padding: 15px;
+            border-left: 5px solid #28a745;
+            background-color: #e6ffec;
+            border-radius: 4px;
+        }
+        .output-box strong {
+            display: block;
+            margin-bottom: 5px;
+            color: #28a745;
+            font-size: 1.1em;
+        }
+        #status-message {
+            text-align: center;
+            color: #666;
+            min-height: 20px;
+            margin-bottom: 15px;
+        }
+        #assistant-face {
+            width: 120px;
+            height: 120px;
+            background-color: #e0e0e0;
+            border-radius: 50%;
+            margin-bottom: 30px;
+            position: relative;
+            display: flex;
+            justify-content: space-around;
+            align-items: center;
+            padding: 0 15px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+            border: 2px solid #ccc;
+        }
+        .eye {
+            width: 20px;
+            height: 25px;
+            background-color: #333;
+            border-radius: 50%;
+            position: relative;
+            z-index: 1;
+        }
+        #mouth {
+            width: 60px;
+            height: 10px;
+            background-color: #333;
+            border-radius: 5px;
+            position: absolute;
+            bottom: 30px;
+            transition: height 0.1s ease-out, width 0.1s ease-out;
+        }
+        .error {
+            color: #dc3545;
+            border-color: #dc3545;
+        }
+    </style>
+</head>
+<body>
+    <h1>Office Multilingual Voice Assistant 🗣️💼</h1>
+    <p>Flujo de Asistencia de Casos. Diga o escriba <strong>"English"</strong> o <strong>"Español"</strong> para comenzar.</p>
+
+    <div id="assistant-face">
+        <div class="eye left-eye"></div>
+        <div class="eye right-eye"></div>
+        <div id="mouth"></div>
+    </div>
+    
+    <div id="container">
+        <button id="voice-button" aria-label="Start voice interaction">
+            Click to Start Conversation
+        </button>
+        <button id="restart-button" aria-label="Restart conversation">
+            Restart Conversation
+        </button>
+        
+        <input type="text" id="text-input" placeholder="Type 'English' or 'Español', or enter your response here" aria-label="Type your language choice or response">
+        
+        <p id="status-message">Click the button to choose your language.</p>
+        
+        <div id="user-input-display" class="output-box" role="region" aria-live="polite">
+            <strong>You Said:</strong> 
+            <span id="user-transcript">...</span>
+        </div>
+        <div id="assistant-response-display" class="output-box" role="region" aria-live="polite">
+            <strong>Assistant Response:</strong>
+            <span id="assistant-text">...</span>
+        </div>
+        
+        <div id="data-collected" style="margin-top: 20px; border-top: 1px solid #ccc; padding-top: 10px; font-size: 0.9em;">
+            <strong>Data Collected:</strong>
+            <pre id="case-data"></pre>
+        </div>
+    </div>
+
+    <script>
+        // --- Global State Variables ---
+        let currentLanguage = 'en-US';
+        let isAwaitingLanguageChoice = true;
+        let activeRecognition = null;
+        let isProcessing = false;
+        let spanishCaseStep = 0;
+        let englishCaseStep = 0;
+        let caseData = {};
+        let speechTimeout = null;
+        let countdownInterval = null;
+
+        // --- DOM Element References ---
+        const userTranscriptDisplay = document.getElementById('user-transcript');
+        const assistantTextDisplay = document.getElementById('assistant-text');
+        const statusMessage = document.getElementById('status-message');
+        const assistantFace = document.getElementById('assistant-face');
+        const mouth = document.getElementById('mouth');
+        const voiceButton = document.getElementById('voice-button');
+        const restartButton = document.getElementById('restart-button');
+        const textInput = document.getElementById('text-input');
+        const caseDataDisplay = document.getElementById('case-data');
+
+        // --- Response Templates ---
+        const responses = {
+            'en-US': {
+                initialPrompt: "Hello! I'm your office assistant. What is your name?",
+                invalidName: "Please provide a valid name (letters only, minimum 2 characters).",
+                step1: (name) => `Thank you, ${name}! The English flow is now complete. Please contact support for further questions.`,
+                // Add more steps here when expanding the English flow
+                flowEnded: "The flow has finished. Say 'English' or 'Español' to restart.",
+                notRecognized: "I am sorry, that phrase is not in my dictionary. Please say or type 'English' or 'Español'.",
+                noSpeech: "No speech detected. Click or type to try again.",
+                speechError: "Speech error. Click or type to try again.",
+                noSpanishVoice: "No Spanish voice available, using English voice.",
+                speakCountdown: (seconds) => `Speak now! ${seconds} seconds left.`
+            },
+            'es-ES': {
+                initialPrompt: "¡Hola! Ahora estamos en español. ¿Cuál es su nombre?",
+                invalidName: "Por favor, introduzca un nombre válido (solo letras, mínimo 2 caracteres).",
+                step1: (name) => `¡Gracias, ${name}! ¿Tiene un caso o solicitud en curso? (Responda 'sí' o 'no')`,
+                step2: "¿Sí o no? ¿Tiene un caso en curso?",
+                step3: "De acuerdo. Por favor, dígame su número de teléfono.",
+                step3Known: (handler) => `Entendido. Por favor, dígame su número de teléfono.`,
+                step4: "Por favor, introduzca un número de teléfono válido (10-15 dígitos).",
+                step5: "Gracias. Por favor, introduzca su mensaje breve para el handler.",
+                step5Complete: (name) => `Su mensaje ha sido registrado y se procesará. ¡Gracias, ${name}!`,
+                step6: "¿Es un nuevo caso o solicitud? (Responda 'sí' o 'no')",
+                step6Complete: (name) => `Entendido. No hay caso en curso ni uno nuevo. ¡Gracias, ${name}!`,
+                step7: "¿La situación o lesión fue en el trabajo o está relacionada con el trabajo? (Responda 'sí' o 'no')",
+                step8: "Por favor, dígame su número de teléfono.",
+                step9: "¿Cuál es su primer idioma (Primer Idioma)?",
+                step10: "Gracias. ¿Cuál es su fecha de contratación?",
+                step11: "¿Cuál es la fecha de la lesión?",
+                step12: "¿Cuál es el nombre de su Empleador?",
+                step13: "¿Cuál es su Cargo Laboral?",
+                step14: "Por favor, déme una breve Descripción de la lesión.",
+                step15: "¿Tiene Detalles Adicionales que debamos saber?",
+                step15Complete: (name) => `Todos los detalles de su caso de trabajo han sido registrados. ¡Gracias, ${name}!`,
+                step16: "Entendido. Por favor, introduzca el Hecho de la Pérdida (Fact of Loss).",
+                step17: "¿Quién le ha Referido (Referido por) a nuestro servicio?",
+                step17Complete: (name) => `Su solicitud de caso no laboral ha sido registrada. ¡Gracias, ${name}!`,
+                flowEnded: "El flujo ha terminado. Diga 'Español' o 'English' para reiniciar.",
+                stopFlow: "¡De acuerdo! El flujo de conversación ha terminado. La data recolectada se muestra abajo.",
+                notRecognized: "Lo siento, esa frase no está en mi diccionario. Diga o escriba 'Español' o 'English'.",
+                noSpeech: "No se detectó voz. Clic o escribe para intentar de nuevo.",
+                speechError: "Error de habla. Clic o escribe para intentar de nuevo.",
+                noSpanishVoice: "No hay voz en español disponible, usando voz en inglés.",
+                speakCountdown: (seconds) => `¡Habla ahora! ${seconds} segundos restantes.`
+            }
+        };
+
+        // --- Helper: Get Response ---
+        function getResponse(lang, key, ...args) {
+            const response = responses[lang][key];
+            return typeof response === 'function' ? response(...args) : response;
+        }
+
+        // --- Helper: Button State Management ---
+        function updateButtonState(state) {
+            setTimeout(() => {
+                voiceButton.disabled = false;
+                voiceButton.style.cursor = 'pointer';
+                voiceButton.setAttribute('aria-disabled', 'false');
+                voiceButton.classList.remove('ready-to-speak');
+                isProcessing = false;
+
+                if (state === 'PROCESSING') {
+                    voiceButton.textContent = currentLanguage === 'es-ES' ? 'Procesando...' : 'Processing...';
+                    voiceButton.disabled = true;
+                    voiceButton.style.cursor = 'not-allowed';
+                    voiceButton.setAttribute('aria-disabled', 'true');
+                    isProcessing = true;
+                } else if (state === 'YOUR_TURN') {
+                    voiceButton.textContent = isAwaitingLanguageChoice
+                        ? (currentLanguage === 'es-ES' ? 'CLIC PARA ELEGIR IDIOMA' : 'CLICK TO CHOOSE LANGUAGE')
+                        : (currentLanguage === 'es-ES' ? 'CLIC PARA HABLAR' : 'CLICK TO SPEAK');
+                    voiceButton.classList.add('ready-to-speak');
+                } else if (state === 'INITIAL' || state === 'STOPPED') {
+                    voiceButton.textContent = 'Click to Start Conversation';
+                }
+            }, 200);
+        }
+
+        // --- Helper: Data Display ---
+        function updateCaseDataDisplay() {
+            caseDataDisplay.textContent = JSON.stringify(caseData, null, 2);
+        }
+
+        // --- Helper: Language Management ---
+        function handleLanguageChoice(transcript) {
+            const lowerTranscript = transcript.toLowerCase().trim();
+            const spanishPatterns = ["español", "spanish", "espanol", "en español", "castellano", "spani", "espanyol"];
+            const englishPatterns = ["english", "inglés", "inglish", "en inglés", "ingles", "english please"];
+            let response = '';
+
+            console.log('Transcript:', lowerTranscript); // Debug log
+
+            if (!lowerTranscript) {
+                response = getResponse(currentLanguage, 'notRecognized');
+                updateButtonState('PROCESSING');
+                speak(response, promptForLanguage);
+                return;
+            }
+
+            if (spanishPatterns.some(pattern => lowerTranscript.includes(pattern))) {
+                currentLanguage = 'es-ES';
+                isAwaitingLanguageChoice = false;
+                spanishCaseStep = 1;
+                caseData = { language: 'Español' };
+                response = getResponse('es-ES', 'initialPrompt');
+            } else if (englishPatterns.some(pattern => lowerTranscript.includes(pattern))) {
+                currentLanguage = 'en-US';
+                isAwaitingLanguageChoice = false;
+                englishCaseStep = 1;
+                caseData = { language: 'English' };
+                response = getResponse('en-US', 'initialPrompt');
+            } else {
+                response = getResponse(currentLanguage, 'notRecognized');
+                updateButtonState('PROCESSING');
+                speak(response, promptForLanguage);
+                return;
+            }
+
+            assistantTextDisplay.textContent = response;
+            updateButtonState('PROCESSING');
+            speak(response, () => updateButtonState('YOUR_TURN'));
+        }
+
+        // --- Helper: Initial Language Prompt ---
+        function promptForLanguage() {
+            isAwaitingLanguageChoice = true;
+            currentLanguage = 'en-US';
+            spanishCaseStep = 0;
+            englishCaseStep = 0;
+            caseData = {};
+            userTranscriptDisplay.textContent = '...';
+            assistantTextDisplay.textContent = '...';
+            caseDataDisplay.textContent = '';
+
+            const promptText = "Hello! Please say or type 'Español' or 'English' to begin.";
+            assistantTextDisplay.textContent = promptText;
+            statusMessage.textContent = 'Assistant is speaking the prompt.';
+            updateButtonState('PROCESSING');
+            speak(promptText, () => updateButtonState('YOUR_TURN'));
+        }
+
+        // --- Spanish Conversation Sequence Handler ---
+        function handleSpanishCaseFlow(transcript) {
+            let response = "";
+            const lowerTranscript = transcript.toLowerCase().trim();
+            const affirmative = ["sí", "si", "yes", "claro", "afirmativo"];
+            const negative = ["no", "sino", "negativo", "not"];
+
+            if (!lowerTranscript) {
+                response = getResponse('es-ES', 'noSpeech');
+                assistantTextDisplay.textContent = response;
+                updateButtonState('PROCESSING');
+                speak(response, () => updateButtonState('YOUR_TURN'));
+                return;
+            }
+
+            const exitFlow = (message) => {
+                spanishCaseStep = 0;
+                response = message;
+                updateCaseDataDisplay();
+                speak(response, () => updateButtonState('STOPPED'));
+            };
+
+            if (lowerTranscript.includes("deja de escuchar") || lowerTranscript.includes("stop") || lowerTranscript.includes("parar")) {
+                exitFlow(getResponse('es-ES', 'stopFlow'));
+                return;
+            }
+
+            switch (spanishCaseStep) {
+                case 1:
+                    if (transcript.length >= 2 && /^[a-zA-Z\s]+$/.test(transcript)) {
+                        caseData.nombre = transcript;
+                        response = getResponse('es-ES', 'step1', transcript);
+                        spanishCaseStep = 2;
+                    } else {
+                        response = getResponse('es-ES', 'invalidName');
+                    }
+                    break;
+
+                case 2:
+                    if (affirmative.some(w => lowerTranscript.includes(w))) {
+                        caseData.casoExistente = true;
+                        response = getResponse('es-ES', 'step3Known');
+                        spanishCaseStep = 3;
+                    } else if (negative.some(w => lowerTranscript.includes(w))) {
+                        caseData.casoExistente = false;
+                        response = getResponse('es-ES', 'step6');
+                        spanishCaseStep = 6;
+                    } else {
+                        response = getResponse('es-ES', 'step2');
+                    }
+                    break;
+
+                case 3:
+                    if (negative.some(w => lowerTranscript.includes(w))) {
+                        caseData.handlerInfo = "Desconocido";
+                        response = getResponse('es-ES', 'step3');
+                        spanishCaseStep = 4;
+                    } else {
+                        caseData.handlerInfo = transcript;
+                        response = getResponse('es-ES', 'step3Known', transcript);
+                        spanishCaseStep = 4;
+                    }
+                    break;
+
+                case 4:
+                    if (/^\+?\d{10,15}$/.test(transcript)) {
+                        caseData.telefono = transcript;
+                        response = getResponse('es-ES', 'step5');
+                        spanishCaseStep = 5;
+                    } else {
+                        response = getResponse('es-ES', 'step4');
+                    }
+                    break;
+
+                case 5:
+                    caseData.mensaje = transcript;
+                    exitFlow(getResponse('es-ES', 'step5Complete', caseData.nombre));
+                    return;
+
+                case 6:
+                    if (affirmative.some(w => lowerTranscript.includes(w))) {
+                        caseData.nuevoCaso = true;
+                        response = getResponse('es-ES', 'step7');
+                        spanishCaseStep = 7;
+                    } else if (negative.some(w => lowerTranscript.includes(w))) {
+                        caseData.nuevoCaso = false;
+                        exitFlow(getResponse('es-ES', 'step6Complete', caseData.nombre));
+                        return;
+                    } else {
+                        response = getResponse('es-ES', 'step6');
+                    }
+                    break;
+
+                case 7:
+                    caseData.esEnElTrabajo = affirmative.some(w => lowerTranscript.includes(w));
+                    response = getResponse('es-ES', 'step8');
+                    spanishCaseStep = 8;
+                    break;
+
+                case 8:
+                    if (/^\+?\d{10,15}$/.test(transcript)) {
+                        caseData.telefono = transcript;
+                        response = getResponse('es-ES', 'step9');
+                        spanishCaseStep = 9;
+                    } else {
+                        response = getResponse('es-ES', 'step4');
+                    }
+                    break;
+
+                case 9:
+                    caseData.primerIdioma = transcript;
+                    if (caseData.esEnElTrabajo) {
+                        response = getResponse('es-ES', 'step10');
+                        spanishCaseStep = 10;
+                    } else {
+                        caseData.tipoCaso = "Personal Injury / Fact of Loss";
+                        response = getResponse('es-ES', 'step16');
+                        spanishCaseStep = 16;
+                    }
+                    break;
+
+                case 10:
+                    caseData.fechaContratacion = transcript;
+                    response = getResponse('es-ES', 'step11');
+                    spanishCaseStep = 11;
+                    break;
+
+                case 11:
+                    caseData.fechaLesion = transcript;
+                    response = getResponse('es-ES', 'step12');
+                    spanishCaseStep = 12;
+                    break;
+
+                case 12:
+                    caseData.empleador = transcript;
+                    response = getResponse('es-ES', 'step13');
+                    spanishCaseStep = 13;
+                    break;
+
+                case 13:
+                    caseData.cargoLaboral = transcript;
+                    response = getResponse('es-ES', 'step14');
+                    spanishCaseStep = 14;
+                    break;
+
+                case 14:
+                    caseData.descripcionLesion = transcript;
+                    response = getResponse('es-ES', 'step15');
+                    spanishCaseStep = 15;
+                    break;
+
+                case 15:
+                    caseData.detallesAdicionales = transcript;
+                    exitFlow(getResponse('es-ES', 'step15Complete', caseData.nombre));
+                    return;
+
+                case 16:
+                    caseData.factOfLoss = transcript;
+                    response = getResponse('es-ES', 'step17');
+                    spanishCaseStep = 17;
+                    break;
+
+                case 17:
+                    caseData.referidoPor = transcript;
+                    exitFlow(getResponse('es-ES', 'step17Complete', caseData.nombre));
+                    return;
+
+                default:
+                    exitFlow(getResponse('es-ES', 'flowEnded'));
+                    return;
+            }
+
+            assistantTextDisplay.textContent = response;
+            updateButtonState('PROCESSING');
+            speak(response, () => updateButtonState('YOUR_TURN'));
+        }
+
+        // --- English Conversation Sequence Handler ---
+        function handleEnglishCaseFlow(transcript) {
+            let response = "";
+            const lowerTranscript = transcript.toLowerCase().trim();
+            const affirmative = ["yes", "yep", "yeah"];
+            const negative = ["no", "nope"];
+
+            if (!lowerTranscript) {
+                response = getResponse('en-US', 'noSpeech');
+                assistantTextDisplay.textContent = response;
+                updateButtonState('PROCESSING');
+                speak(response, () => updateButtonState('YOUR_TURN'));
+                return;
+            }
+
+            const exitFlow = (message) => {
+                englishCaseStep = 0;
+                response = message;
+                updateCaseDataDisplay();
+                speak(response, () => updateButtonState('STOPPED'));
+            };
+
+            if (lowerTranscript.includes("stop")) {
+                exitFlow(getResponse('en-US', 'flowEnded'));
+                return;
+            }
+
+            switch (englishCaseStep) {
+                case 1:
+                    if (transcript.length >= 2 && /^[a-zA-Z\s]+$/.test(transcript)) {
+                        caseData.name = transcript;
+                        response = getResponse('en-US', 'step1', transcript);
+                        englishCaseStep = 0; // Currently stops here
+                        exitFlow(response);
+                        return;
+                    } else {
+                        response = getResponse('en-US', 'invalidName');
+                    }
+                    break;
+
+                // Add more cases here when expanding the English flow
+                /*
+                case 2:
+                    if (affirmative.some(w => lowerTranscript.includes(w))) {
+                        caseData.hasCase = true;
+                        response = "Do you know the name or extension of your case handler?";
+                        englishCaseStep = 3;
+                    } else if (negative.some(w => lowerTranscript.includes(w))) {
+                        caseData.hasCase = false;
+                        response = "Is this a new case or request? (Say 'yes' or 'no')";
+                        englishCaseStep = 6;
+                    } else {
+                        response = "Please say 'yes' or 'no'. Do you have an ongoing case?";
+                    }
+                    break;
+                */
+
+                default:
+                    exitFlow(getResponse('en-US', 'flowEnded'));
+                    return;
+            }
+
+            assistantTextDisplay.textContent = response;
+            updateButtonState('PROCESSING');
+            speak(response, () => updateButtonState('YOUR_TURN'));
+        }
+
+        // --- Speech-to-Text ---
+        function startListening() {
+            if (isProcessing) return;
+            if (activeRecognition) {
+                activeRecognition.stop();
+                activeRecognition = null;
+            }
+
+            userTranscriptDisplay.textContent = '...';
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+            if (SpeechRecognition) {
+                const recognition = new SpeechRecognition();
+                activeRecognition = recognition;
+                recognition.lang = isAwaitingLanguageChoice ? 'en-US' : currentLanguage;
+                recognition.interimResults = false;
+                recognition.maxAlternatives = 1;
+                recognition.continuous = true; // Allow longer speech input
+
+                let secondsLeft = 10; // 10 seconds for speaking
+                const updateCountdown = () => {
+                    statusMessage.textContent = getResponse(currentLanguage, 'speakCountdown', secondsLeft);
+                    secondsLeft--;
+                    if (secondsLeft < 0) {
+                        clearInterval(countdownInterval);
+                        recognition.stop();
+                        statusMessage.textContent = getResponse(currentLanguage, 'noSpeech');
+                        updateButtonState('YOUR_TURN');
+                        resetFace();
+                    }
+                };
+
+                recognition.onstart = () => {
+                    statusMessage.textContent = getResponse(currentLanguage, 'speakCountdown', secondsLeft);
+                    updateButtonState('PROCESSING');
+                    animateMouthListening();
+                    countdownInterval = setInterval(updateCountdown, 1000);
+                    speechTimeout = setTimeout(() => {
+                        recognition.stop();
+                    }, 10000); // 10-second timeout
+                };
+
+                recognition.onspeechstart = () => {
+                    clearTimeout(speechTimeout); // Reset timeout on speech detection
+                    clearInterval(countdownInterval); // Stop countdown
+                    statusMessage.textContent = currentLanguage === 'es-ES' ? '🎙️ Escuchando... ¡Habla!' : '🎙️ Listening... Speak!';
+                    speechTimeout = setTimeout(() => {
+                        recognition.stop();
+                    }, 10000); // Restart timeout
+                };
+
+                recognition.onresult = (event) => {
+                    clearTimeout(speechTimeout);
+                    clearInterval(countdownInterval);
+                    const transcript = event.results[0][0].transcript;
+                    userTranscriptDisplay.textContent = transcript;
+
+                    if (isAwaitingLanguageChoice) {
+                        handleLanguageChoice(transcript);
+                    } else if (currentLanguage === 'es-ES' && spanishCaseStep > 0) {
+                        handleSpanishCaseFlow(transcript);
+                    } else if (currentLanguage === 'en-US' && englishCaseStep > 0) {
+                        handleEnglishCaseFlow(transcript);
+                    } else {
+                        const message = getResponse(currentLanguage, 'flowEnded');
+                        assistantTextDisplay.textContent = message;
+                        speak(message, () => updateButtonState('STOPPED'));
+                    }
+                };
+
+                recognition.onerror = (event) => {
+                    clearTimeout(speechTimeout);
+                    clearInterval(countdownInterval);
+                    statusMessage.classList.add('error');
+                    statusMessage.textContent = getResponse(currentLanguage, 'speechError') + ` (${event.error})`;
+                    updateButtonState('YOUR_TURN');
+                    resetFace();
+                };
+
+                recognition.onend = () => {
+                    clearTimeout(speechTimeout);
+                    clearInterval(countdownInterval);
+                    activeRecognition = null;
+                    resetFace();
+                    if (!userTranscriptDisplay.textContent || userTranscriptDisplay.textContent === '...') {
+                        statusMessage.textContent = getResponse(currentLanguage, 'noSpeech');
+                        updateButtonState('YOUR_TURN');
+                    }
+                };
+
+                recognition.start();
+            } else {
+                statusMessage.textContent = "Speech Recognition not supported. Use the text input.";
+                updateButtonState('YOUR_TURN');
+                resetFace();
+            }
+        }
+
+        // --- Handle Text Input ---
+        textInput.addEventListener('keypress', (event) => {
+            if (event.key === 'Enter' && textInput.value.trim() && !isProcessing) {
+                const transcript = textInput.value.trim();
+                userTranscriptDisplay.textContent = transcript;
+                textInput.value = '';
+
+                if (isAwaitingLanguageChoice) {
+                    handleLanguageChoice(transcript);
+                } else if (currentLanguage === 'es-ES' && spanishCaseStep > 0) {
+                    handleSpanishCaseFlow(transcript);
+                } else if (currentLanguage === 'en-US' && englishCaseStep > 0) {
+                    handleEnglishCaseFlow(transcript);
+                } else {
+                    const message = getResponse(currentLanguage, 'flowEnded');
+                    assistantTextDisplay.textContent = message;
+                    speak(message, () => updateButtonState('STOPPED'));
+                }
+            }
+        });
+
+        // --- Face Animation Control and TTS ---
+        function animateMouthListening() {
+            mouth.style.height = '25px';
+            mouth.style.width = '25px';
+            mouth.style.borderRadius = '50%';
+            assistantFace.classList.add('listening');
+        }
+
+        function animateMouthSpeaking(utterance, callback) {
+            let toggle = false;
+            utterance.onstart = () => {
+                assistantFace.classList.add('speaking');
+                mouth.style.height = '20px';
+                mouth.style.width = '60px';
+                mouth.style.borderRadius = '50%';
+                window.speakingInterval = setInterval(() => {
+                    mouth.style.height = toggle ? '25px' : '15px';
+                    mouth.style.width = toggle ? '65px' : '55px';
+                    toggle = !toggle;
+                }, 150);
+            };
+            utterance.onend = () => {
+                clearInterval(window.speakingInterval);
+                resetFace();
+                if (callback) callback();
+            };
+            utterance.onerror = () => {
+                clearInterval(window.speakingInterval);
+                resetFace();
+                statusMessage.textContent = getResponse(currentLanguage, 'speechError');
+                updateButtonState('YOUR_TURN');
+                if (callback) callback();
+            };
+        }
+
+        function resetFace() {
+            assistantFace.classList.remove('listening', 'speaking');
+            mouth.style.height = '10px';
+            mouth.style.width = '60px';
+            mouth.style.borderRadius = '5px';
+        }
+
+        function speak(text, callback) {
+            if ('speechSynthesis' in window) {
+                window.speechSynthesis.cancel();
+                const utterance = new SpeechSynthesisUtterance(text);
+                utterance.lang = currentLanguage;
+                utterance.rate = 1.0;
+
+                const voices = window.speechSynthesis.getVoices();
+                let selectedVoice = voices.find(voice => voice.lang === currentLanguage);
+                if (!selectedVoice && currentLanguage === 'es-ES') {
+                    selectedVoice = voices.find(voice => voice.lang === 'en-US');
+                    statusMessage.textContent = getResponse(currentLanguage, 'noSpanishVoice');
+                }
+                if (selectedVoice) {
+                    utterance.voice = selectedVoice;
+                }
+
+                const estimatedDuration = text.split(' ').length * 500;
+                const speechTimeout = setTimeout(() => {
+                    window.speechSynthesis.cancel();
+                    resetFace();
+                    updateButtonState('YOUR_TURN');
+                    statusMessage.textContent = getResponse(currentLanguage, 'speechError');
+                    if (callback) callback();
+                }, Math.max(5000, estimatedDuration));
+
+                utterance.onend = () => {
+                    clearTimeout(speechTimeout);
+                    resetFace();
+                    if (callback) callback();
+                };
+
+                animateMouthSpeaking(utterance, callback);
+                window.speechSynthesis.speak(utterance);
+            } else {
+                resetFace();
+                updateButtonState('YOUR_TURN');
+                statusMessage.textContent = 'Text-to-Speech not supported. Use the text input.';
+                if (callback) callback();
+            }
+        }
+
+        // --- Initialization ---
+        document.addEventListener('DOMContentLoaded', () => {
+            voiceButton.addEventListener('click', () => {
+                if (!isProcessing) {
+                    startListening();
+                }
+            });
+
+            restartButton.addEventListener('click', () => {
+                if (!isProcessing) {
+                    promptForLanguage();
+                }
+            });
+
+            voiceButton.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    if (!isProcessing) startListening();
+                }
+            });
+
+            restartButton.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    if (!isProcessing) promptForLanguage();
+                }
+            });
+
+            promptForLanguage();
+            updateButtonState('INITIAL');
+
+            if ('speechSynthesis' in window) {
+                window.speechSynthesis.getVoices();
+                window.speechSynthesis.onvoiceschanged = () => { console.log("Speech voices loaded."); };
+            }
+        });
+    </script>
+</body>
+</html>
